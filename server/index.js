@@ -1,6 +1,7 @@
 const http = require('http');
 const fs = require('fs');
 
+const port = process.env.PORT || 5560;
 const httpServer = http.createServer();
 
 function generateShortId() {
@@ -23,4 +24,4 @@ httpServer.on('request', (req, res) => {
   res.end('done');
 });
 
-httpServer.listen(5560);
+httpServer.listen(port, () => console.log(`Server is running at port ${port}`));
