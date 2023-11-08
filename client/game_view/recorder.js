@@ -1,9 +1,7 @@
-const CHUNK_SIZE = 10 * 1024; // 10kb
-const API_ENDPOINT = 'http://localhost:5560/';
+const canvasElement = document.querySelector('canvas');
+const uploadEndpoint = 'http://localhost:50000/staff/upload';
 
-// Game View taken from here
-// https://github.com/citizenfx/fivem/blob/ecd3ef7a3c16a66d77d772e495e084b4598da6b0/ext/cfx-ui/src/app/app.component.ts#L18-L170
-
+// GV yoinked from here: https://github.com/citizenfx/fivem/blob/ecd3ef7a3c16a66d77d772e495e084b4598da6b0/ext/cfx-ui/src/app/app.component.ts#L18-L170
 const vertexShaderSrc = `
   attribute vec2 a_position;
   attribute vec2 a_texcoord;
@@ -75,7 +73,6 @@ function createBuffers(gl) {
 function createProgram(gl) {
   const vertexShader = makeShader(gl, gl.VERTEX_SHADER, vertexShaderSrc);
   const fragmentShader = makeShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSrc);
-
   const program = gl.createProgram();
 
   gl.attachShader(program, vertexShader);
@@ -138,7 +135,6 @@ function createGameView(canvas) {
 
   render = () => {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
     gameView.animationFrame = setTimeout(render, 33.3);
   };
 
@@ -147,48 +143,62 @@ function createGameView(canvas) {
   return gameView;
 }
 
-const canvasElement = document.querySelector('canvas');
-const gameView = createGameView(canvasElement);
+let mediaRecorder;
+
+async function uploadBlob(videoBlob) {
+  const formData = new FormData();
+  formData.append('video', videoBlob);
+
+  const response = await fetch(uploadEndpoint, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    console.error('Failed to upload video: ', response.status, response.statusText);
+  }
+}
+
+function startRecording() {
+  const gameView = createGameView(canvasElement);
+  const videoStream = canvasElement.captureStream(30);
+  const startTime = Date.now();
+  const videoChunks = [];
+
+  window.gameView = gameView;
+  mediaRecorder = new MediaRecorder(videoStream, { mimeType: 'video/webm;codecs=vp9' });
+
+  mediaRecorder.start();
+  mediaRecorder.ondataavailable = (e) => e.data.size > 0 && videoChunks.push(e.data);
+
+  mediaRecorder.onstop = async () => {
+    const videoDuration = Date.now() - startTime;
+    const videoBlob = new Blob(videoChunks, { type: 'video/webm' });
+    // const resolvedBlob = await ysFixWebmDuration(videoBlob, videoDuration, { logger: false }); // This fixes the corrupt timeline of the video
+
+    if (videoBlob.size > 0) {
+      uploadBlob(videoBlob);
+    }
+  };
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+  }
+}
 
 window.addEventListener('message', (event) => {
-  const data = event.data;
+  const { command } = event.data;
 
-  if (data.START_RECORD && data.RECORD_TIME) {
-    const stream = canvasElement.captureStream(25);
-    const mediaRecorder = new MediaRecorder(stream);
-    const videoChunks = [];
-
-    mediaRecorder.ondataavailable = (e) => e.data.size > 0 && videoChunks.push(e.data);
-
-    mediaRecorder.onstop = (e) => {
-      if (!videoChunks[0]) return;
-
-      const videoBlob = new Blob(videoChunks, { type: videoChunks[0].type });
-      uploadBlob(videoBlob);
-    };
-
-    mediaRecorder.start();
-
-    setTimeout(() => {
-      mediaRecorder.stop();
-    }, data.RECORD_TIME || 0);
+  switch (command) {
+    case 'START_RECORDING':
+      startRecording();
+      break;
+    case 'STOP_RECORDING':
+      stopRecording();
+      break;
+    default:
+    // console.warn('Unknown command received:', command);
   }
 });
-
-function uploadBlob(videoBlob) {
-  const reader = new FileReader();
-
-  reader.onload = (event) => {
-    const videoChunks = event.target.result;
-
-    fetch(API_ENDPOINT, {
-      headers: {
-        'Content-Type': 'application/pdf+base64',
-      },
-      method: 'POST',
-      body: videoChunks,
-    });
-  };
-
-  reader.readAsDataURL(videoBlob);
-}
